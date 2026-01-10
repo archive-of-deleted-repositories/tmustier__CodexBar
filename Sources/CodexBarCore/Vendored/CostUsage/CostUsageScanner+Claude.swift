@@ -460,6 +460,13 @@ extension CostUsageScanner {
             touched = scanState.touched
             cache.roots = scanState.rootCache.isEmpty ? nil : scanState.rootCache
 
+            let piPaths = Self.scanPiSessionFiles(
+                target: .claude,
+                range: range,
+                options: options,
+                cache: &cache)
+            touched.formUnion(piPaths)
+
             for key in cache.files.keys where !touched.contains(key) {
                 if let old = cache.files[key] {
                     Self.applyFileDays(cache: &cache, fileDays: old.days, sign: -1)

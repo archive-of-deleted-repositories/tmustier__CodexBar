@@ -10,6 +10,7 @@ enum CostUsageScanner {
     struct Options: Sendable {
         var codexSessionsRoot: URL?
         var claudeProjectsRoots: [URL]?
+        var piSessionsRoot: URL?
         var cacheRoot: URL?
         var refreshMinIntervalSeconds: TimeInterval = 60
         var claudeLogProviderFilter: ClaudeLogProviderFilter = .all
@@ -19,12 +20,14 @@ enum CostUsageScanner {
         init(
             codexSessionsRoot: URL? = nil,
             claudeProjectsRoots: [URL]? = nil,
+            piSessionsRoot: URL? = nil,
             cacheRoot: URL? = nil,
             claudeLogProviderFilter: ClaudeLogProviderFilter = .all,
             forceRescan: Bool = false)
         {
             self.codexSessionsRoot = codexSessionsRoot
             self.claudeProjectsRoots = claudeProjectsRoots
+            self.piSessionsRoot = piSessionsRoot
             self.cacheRoot = cacheRoot
             self.claudeLogProviderFilter = claudeLogProviderFilter
             self.forceRescan = forceRescan
@@ -290,7 +293,7 @@ enum CostUsageScanner {
             root: root,
             scanSinceKey: range.scanSinceKey,
             scanUntilKey: range.scanUntilKey)
-        let filePathsInScan = Set(files.map(\.path))
+        var filePathsInScan = Set(files.map(\.path))
 
         if shouldRefresh {
             if options.forceRescan {
@@ -351,6 +354,13 @@ enum CostUsageScanner {
                 cache.files[path] = usage
                 Self.applyFileDays(cache: &cache, fileDays: usage.days, sign: 1)
             }
+
+            let piPaths = Self.scanPiSessionFiles(
+                target: .codex,
+                range: range,
+                options: options,
+                cache: &cache)
+            filePathsInScan.formUnion(piPaths)
 
             for key in cache.files.keys where !filePathsInScan.contains(key) {
                 if let old = cache.files[key] {

@@ -138,6 +138,107 @@ struct CostUsageScannerTests {
     }
 
     @Test
+    func codexDailyReportIncludesPiSessions() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2025, month: 12, day: 21)
+        let iso0 = env.isoString(for: day)
+
+        let piEntry: [String: Any] = [
+            "type": "message",
+            "id": "msg_pi_codex",
+            "timestamp": iso0,
+            "message": [
+                "role": "assistant",
+                "provider": "openai-codex",
+                "api": "openai-codex-responses",
+                "model": "gpt-5.2-codex",
+                "usage": [
+                    "input": 120,
+                    "cacheRead": 10,
+                    "output": 30,
+                ],
+            ],
+        ]
+        _ = try env.writePiSessionFile(
+            relativePath: "session-a.jsonl",
+            contents: env.jsonl([piEntry]))
+
+        var options = CostUsageScanner.Options(
+            codexSessionsRoot: env.codexSessionsRoot,
+            claudeProjectsRoots: nil,
+            piSessionsRoot: env.piSessionsRoot,
+            cacheRoot: env.cacheRoot)
+        options.refreshMinIntervalSeconds = 0
+
+        let report = CostUsageScanner.loadDailyReport(
+            provider: .codex,
+            since: day,
+            until: day,
+            now: day,
+            options: options)
+        #expect(report.data.count == 1)
+        #expect(report.data[0].modelsUsed == ["gpt-5.2"])
+        #expect(report.data[0].inputTokens == 120)
+        #expect(report.data[0].outputTokens == 30)
+        #expect(report.data[0].totalTokens == 150)
+        #expect((report.data[0].costUSD ?? 0) > 0)
+    }
+
+    @Test
+    func claudeDailyReportIncludesPiSessions() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2025, month: 12, day: 21)
+        let iso0 = env.isoString(for: day)
+
+        let piEntry: [String: Any] = [
+            "type": "message",
+            "id": "msg_pi_claude",
+            "timestamp": iso0,
+            "message": [
+                "role": "assistant",
+                "provider": "anthropic",
+                "api": "anthropic-messages",
+                "model": "***REMOVED***",
+                "usage": [
+                    "input": 200,
+                    "cacheRead": 25,
+                    "cacheWrite": 50,
+                    "output": 80,
+                ],
+            ],
+        ]
+        _ = try env.writePiSessionFile(
+            relativePath: "session-b.jsonl",
+            contents: env.jsonl([piEntry]))
+
+        var options = CostUsageScanner.Options(
+            codexSessionsRoot: nil,
+            claudeProjectsRoots: [env.claudeProjectsRoot],
+            piSessionsRoot: env.piSessionsRoot,
+            cacheRoot: env.cacheRoot)
+        options.refreshMinIntervalSeconds = 0
+
+        let report = CostUsageScanner.loadDailyReport(
+            provider: .claude,
+            since: day,
+            until: day,
+            now: day,
+            options: options)
+        #expect(report.data.count == 1)
+        #expect(report.data[0].modelsUsed == ["***REMOVED***"])
+        #expect(report.data[0].inputTokens == 200)
+        #expect(report.data[0].cacheReadTokens == 25)
+        #expect(report.data[0].cacheCreationTokens == 50)
+        #expect(report.data[0].outputTokens == 80)
+        #expect(report.data[0].totalTokens == 355)
+        #expect((report.data[0].costUSD ?? 0) > 0)
+    }
+
+    @Test
     func vertexDailyReportFiltersClaudeLogs() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
@@ -775,6 +876,8 @@ private struct CostUsageTestEnvironment {
     let cacheRoot: URL
     let codexSessionsRoot: URL
     let claudeProjectsRoot: URL
+    let piSessionsRoot: URL
+    let originalPiAgentDir: String?
 
     init() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -785,12 +888,21 @@ private struct CostUsageTestEnvironment {
         self.cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
         self.codexSessionsRoot = root.appendingPathComponent("codex-sessions", isDirectory: true)
         self.claudeProjectsRoot = root.appendingPathComponent("claude-projects", isDirectory: true)
+        self.piSessionsRoot = root.appendingPathComponent("pi-sessions", isDirectory: true)
+        self.originalPiAgentDir = ProcessInfo.processInfo.environment["PI_CODING_AGENT_DIR"]
         try FileManager.default.createDirectory(at: self.cacheRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: self.codexSessionsRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: self.claudeProjectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: self.piSessionsRoot, withIntermediateDirectories: true)
+        setenv("PI_CODING_AGENT_DIR", self.piSessionsRoot.path, 1)
     }
 
     func cleanup() {
+        if let originalPiAgentDir {
+            setenv("PI_CODING_AGENT_DIR", originalPiAgentDir, 1)
+        } else {
+            unsetenv("PI_CODING_AGENT_DIR")
+        }
         try? FileManager.default.removeItem(at: self.root)
     }
 
@@ -833,6 +945,13 @@ private struct CostUsageTestEnvironment {
 
     func writeClaudeProjectFile(relativePath: String, contents: String) throws -> URL {
         let url = self.claudeProjectsRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writePiSessionFile(relativePath: String, contents: String) throws -> URL {
+        let url = self.piSessionsRoot.appendingPathComponent(relativePath, isDirectory: false)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try contents.write(to: url, atomically: true, encoding: .utf8)
         return url
